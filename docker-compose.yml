@@ -4,17 +4,19 @@ services:
     image: phpmyadmin
     restart: always
     ports:
-      - 8080:80
+      - 4445:80
     env_file:
       - .env
     links:
       - db:db
-
+    depends_on:
+      - db
+      
   wordpress:
     image: wordpress:latest
     restart: always
     ports:
-      - 8081:80
+      - 4444:80
     env_file:
       - .env
     volumes:
@@ -23,6 +25,7 @@ services:
       - db
 
   db:
+    container_name: db
     image: mysql:latest
     restart: always
     env_file:

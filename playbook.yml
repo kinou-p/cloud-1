@@ -1,21 +1,134 @@
----
+# ---
 - name: Deploy WordPress
-  hosts: web
-  become: true
+  hosts: myhosts
+  # remote_user: root  # Change remote user to your sudo user!
+  # become: true
+  vars:
+    arch_mapping:  # Map ansible architecture {{ ansible_architecture }} names to Docker's architecture names
+      x86_64: amd64
+      aarch64: arm64
+
   tasks:
-    - name: Install Docker
-      apt:
-        name: docker.io
+
+    - name: Create src directory if it does not exist
+      ansible.builtin.file:
+        path: ./src
+        state: directory
+        mode: '0755'
+
+    - name: Synchronize folder using rsync
+      synchronize:
+        src: ./  # Specify the source folder on the control node
+        dest: src/  # Specify the destination folder on the target node
+
+    - name: Update and upgrade all packages to the latest version
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        pkg:
+          - python3-pip
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          # - software-properties-commo
+    - name: Create directory for Docker's GPG key
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add Docker's official GPG key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        keyring: /etc/apt/keyrings/docker.gpg
+        state: present
+    
+    - name: Print architecture variables
+      ansible.builtin.debug:
+        msg: "Architecture: {{ ansible_architecture }}, Codename: {{ ansible_lsb.codename }}"
+
+    - name: Add Docker repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ arch_mapping[ansible_architecture] | default(ansible_architecture) }}
+          signed-by=/etc/apt/keyrings/docker.gpg]
+          https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable
+        filename: docker
+        state: present
+    # - name: Add Docker repository
+    #   apt_repository:
+    #     repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable
+    #     state: present
+
+    - name: Install Docker and related packages
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+        update_cache: true
+      loop:
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+        - docker-buildx-plugin
+        - docker-compose-plugin
+
+    - name: Add Docker group
+      ansible.builtin.group:
+        name: docker
         state: present
 
-    - name: Install Docker Compose
-      pip:
-        name: docker-compose
+    - name: Add user to Docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
 
-    - name: Copy Docker Compose file
-      copy:
-        src: /path/to/docker-compose.yml
-        dest: /home/user/docker-compose.yml
+    - name: Install Docker Module for Python
+      ansible.builtin.apt:
+        pkg:
+          - python3-docker
 
-    - name: Start Docker containers
-      command: docker-compose up -d
+    # - name: Install Docker Module for Python
+    #   ansible.builtin.shell:
+    #     cmd: pip3 install docker
+
+    - name: Enable and start Docker services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - docker.service
+        - containerd.service
+
+    - name: Install docker-compose
+      remote_user: ubuntu
+      get_url: 
+        url : https://github.com/docker/compose/releases/download/1.25.1-rc1/docker-compose-Linux-x86_64
+        dest: /usr/local/bin/docker-compose
+        mode: 'u+x,g+x'
+
+    - name: Launch Docker Compose project
+      ansible.builtin.shell:
+          cmd: docker-compose up
+          chdir: src/
+
+    # - name: Copy Docker Compose file
+    #   copy:
+    #     src: ./
+    #     dest: src/
+
+    # - name: Launch Docker Compose project
+    #   ansible.builtin.shell:
+    #       cmd: docker-compose up
+    #       chdir: src/
+
+    # - name: Launch Docker Compose project
+    #   docker_compose:
+    #     project_src: src/
+    #     state: present
